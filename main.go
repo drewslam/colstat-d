@@ -115,9 +115,9 @@ type Hub struct {
 func NewHub() *Hub {
 	return &Hub{
 		clients:    make(map[net.Conn]bool),
-		register:   make(chan net.Conn),
-		unregister: make(chan net.Conn),
-		updates:    make(chan Update),
+		register:   make(chan net.Conn, 10),
+		unregister: make(chan net.Conn, 10),
+		updates:    make(chan Update, 50),
 	}
 }
 
