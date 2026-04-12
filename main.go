@@ -282,27 +282,24 @@ func (w *MediaWorker) Run(updates chan Update) {
 		}
 
 		outFields := strings.Fields(outBuf.String())
-		if outFields[0] == "Volume:" {
+		if len(outFields) >= 2 && outFields[0] == "Volume:" {
 			outVol, _ = strconv.ParseFloat(outFields[1], 64)
-		}
-		if len(outFields) > 2 && strings.Contains(outFields[2], "MUTED") {
-			outMuted = true
-		} else {
-			outMuted = false
+			outMuted = len(outFields) > 2 && strings.Contains(outFields[2], "MUTED")
 		}
 
 		inFields := strings.Fields(inBuf.String())
 		if inFields[0] == "Volume:" {
 			inVol, _ = strconv.ParseFloat(inFields[1], 64)
-		}
-		if len(inFields) > 2 && strings.Contains(inFields[2], "MUTED") {
-			inMuted = true
-		} else {
-			inMuted = false
+			inMuted = len(inFields) > 2 && strings.Contains(inFields[2], "MUTED")
 		}
 
-		brightFields := strings.Split(brightBuf.String(), ",")
-		brightPct, _ = strconv.Atoi(strings.TrimSuffix(strings.TrimSpace(brightFields[3]), "%"))
+		brightStr := strings.TrimSpace(brightBuf.String())
+		if brightStr != "" {
+			brightFields := strings.Split(brightBuf.String(), ",")
+			if len(brightFields) >= 4 {
+				brightPct, _ = strconv.Atoi(strings.TrimSuffix(strings.TrimSpace(brightFields[3]), "%"))
+			}
+		}
 
 		updates <- VolUpdate{Level: outVol, Muted: outMuted}
 		updates <- MicUpdate{Level: inVol, Muted: inMuted}
