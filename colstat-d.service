@@ -1,0 +1,14 @@
+[Unit]
+Description=colstat-d system metrics daemon
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/colstat-d
+Restart=on-failure
+RestartSec=3
+PassEnvironment=WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS
+
+[Install]
+WantedBy=graphical-session.target
