@@ -323,9 +323,7 @@ func (w *NetWorker) Run(updates chan Update) {
 			log.Print(err)
 		}
 
-		netList := strings.Split(netBuf.String(), "\n")
-
-		for _, line := range netList {
+		for line := range strings.SplitSeq(netBuf.String(), "\n") {
 			fields := strings.Split(line, ":")
 			if len(fields) > 2 && fields[2] == "yes" {
 				ssid = strings.Join(fields[:len(fields)-2], ":")
@@ -334,7 +332,7 @@ func (w *NetWorker) Run(updates chan Update) {
 			}
 		}
 
-		updates <- NetUpdate{ SSID: ssid, Strength: strength }
+		updates <- NetUpdate{SSID: ssid, Strength: strength}
 	}
 }
 
