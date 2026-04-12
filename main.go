@@ -37,6 +37,16 @@ const (
 	BatFull
 )
 
+// Power profile enum
+type PowStatus int
+
+const (
+	PowUnknown PowStatus = iota
+	PowSave
+	PowBalanced
+	PowPerformance
+)
+
 // Update interface types
 type Update any
 
@@ -59,6 +69,7 @@ type BatUpdate struct {
 	Status BatStatus
 }
 type BrightUpdate struct{ Value int }
+type ProfileUpdate struct{ Status PowStatus }
 
 // State types
 type NetState struct {
@@ -82,13 +93,14 @@ type BatState struct {
 }
 
 type SystemState struct {
-	CPU    int      `json:"cpu"`
-	RAM    int      `json:"ram"`
-	Net    NetState `json:"net"`
-	Vol    VolState `json:"vol"`
-	Mic    MicState `json:"mic"`
-	Bat    BatState `json:"bat"`
-	Bright int      `json:"bright"`
+	CPU     int       `json:"cpu"`
+	RAM     int       `json:"ram"`
+	Net     NetState  `json:"net"`
+	Vol     VolState  `json:"vol"`
+	Mic     MicState  `json:"mic"`
+	Bat     BatState  `json:"bat"`
+	Bright  int       `json:"bright"`
+	Profile PowStatus `json:"profile"`
 }
 
 // Hub
@@ -142,6 +154,8 @@ func (h *Hub) Run() {
 				h.state.Bat.Status = v.Status
 			case BrightUpdate:
 				h.state.Bright = v.Value
+			case ProfileUpdate:
+				h.state.Profile = v.Status
 			}
 
 		case <-ticker.C:
@@ -332,23 +346,46 @@ type BatWorker struct{}
 func (w *BatWorker) Run(updates chan Update) {
 	ticker := time.NewTicker(30 * time.Second)
 	for range ticker.C {
-		dat, _ := os.ReadFile("/sys/class/power_supply/BAT0/capacity")
-		pct, _ := strconv.Atoi(strings.TrimSpace(string(dat)))
+		if dat, err := os.ReadFile("/sys/class/power_supply/BAT0/capacity"); err == nil {
+			pct, _ := strconv.Atoi(strings.TrimSpace(string(dat)))
+			statDat, _ := os.ReadFile("/sys/class/power_supply/BAT0/status")
+			statusStr := strings.TrimSpace(string(statDat))
 
-		statDat, _ := os.ReadFile("/sys/class/power_supply/BAT0/status")
-		statusStr := strings.TrimSpace(string(statDat))
+			status := BatUnknown
+			switch statusStr {
+			case "Discharging":
+				status = BatDischarging
+			case "Charging":
+				status = BatCharging
+			case "Full":
+				status = BatFull
+			}
 
-		status := BatUnknown
-		switch statusStr {
-		case "Discharging":
-			status = BatDischarging
-		case "Charging":
-			status = BatCharging
-		case "Full":
-			status = BatFull
+			updates <- BatUpdate{Pct: pct, Status: status}
 		}
+	}
+}
 
-		updates <- BatUpdate{Pct: pct, Status: status}
+type ProfileWorker struct{}
+
+func (w *ProfileWorker) Run(updates chan Update) {
+	ticker := time.NewTicker(5 * time.Second)
+	for range ticker.C {
+		if acp, err := os.ReadFile("/etc/tuned/active_profile"); err == nil {
+			statusStr := strings.TrimSpace(string(acp))
+
+			status := PowUnknown
+			switch statusStr {
+			case "powersave":
+				status = PowSave
+			case "balanced", "balanced-battery":
+				status = PowBalanced
+			case "throughput-performance", "latency-performance":
+				status = PowPerformance
+			}
+
+			updates <- ProfileUpdate{Status: status}
+		}
 	}
 }
 
@@ -366,9 +403,17 @@ func main() {
 		&MediaWorker{},
 		&NetWorker{},
 		&BatWorker{},
+		&ProfileWorker{},
 	}
 	for _, w := range workers {
-		go w.Run(hub.updates)
+		go func(worker interface{ Run(chan Update) }) {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("Worker recovered from panic: %v", r)
+				}
+			}()
+			worker.Run(hub.updates)
+		}(w)
 	}
 
 	l, err := net.Listen("unix", socketPath)
