@@ -18,6 +18,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -257,14 +258,12 @@ type MediaWorker struct{}
 func (w *MediaWorker) Run(updates chan Update) {
 	ticker := time.NewTicker(2 * time.Second)
 	for range ticker.C {
-		var outBuf, inBuf, brightBuf strings.Builder
+		var outBuf, inBuf strings.Builder
 		var outVol, inVol float64
 		var outMuted, inMuted bool
-		var brightPct int
 
 		outCmd := exec.Command("wpctl", "get-volume", "@DEFAULT_SINK@")
 		inCmd := exec.Command("wpctl", "get-volume", "@DEFAULT_SOURCE@")
-		brightCmd := exec.Command("brightnessctl", "-m")
 
 		outCmd.Stdout = &outBuf
 		if err := outCmd.Run(); err != nil {
@@ -276,11 +275,6 @@ func (w *MediaWorker) Run(updates chan Update) {
 			log.Print(err)
 		}
 
-		brightCmd.Stdout = &brightBuf
-		if err := brightCmd.Run(); err != nil {
-			log.Print(err)
-		}
-
 		outFields := strings.Fields(outBuf.String())
 		if len(outFields) >= 2 && outFields[0] == "Volume:" {
 			outVol, _ = strconv.ParseFloat(outFields[1], 64)
@@ -288,23 +282,60 @@ func (w *MediaWorker) Run(updates chan Update) {
 		}
 
 		inFields := strings.Fields(inBuf.String())
-		if inFields[0] == "Volume:" {
+		if len(inFields) >= 2 && inFields[0] == "Volume:" {
 			inVol, _ = strconv.ParseFloat(inFields[1], 64)
 			inMuted = len(inFields) > 2 && strings.Contains(inFields[2], "MUTED")
 		}
 
-		brightStr := strings.TrimSpace(brightBuf.String())
-		if brightStr != "" {
-			brightFields := strings.Split(brightBuf.String(), ",")
-			if len(brightFields) >= 4 {
-				brightPct, _ = strconv.Atoi(strings.TrimSuffix(strings.TrimSpace(brightFields[3]), "%"))
-			}
-		}
-
 		updates <- VolUpdate{Level: outVol, Muted: outMuted}
 		updates <- MicUpdate{Level: inVol, Muted: inMuted}
-		updates <- BrightUpdate{Value: brightPct}
 	}
+}
+
+type BrightWorker struct{}
+
+func (w *BrightWorker) Run(updates chan Update) {
+	backlightBase, err := detectBacklightPath()
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	maxBrightness := readInt(backlightBase + "/max_brightness")
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		brightVal := readInt(backlightBase + "/actual_brightness")
+		if maxBrightness > 0 {
+			brightPct := (brightVal * 100) / maxBrightness
+			updates <- BrightUpdate{Value: brightPct}
+		}
+	}
+}
+
+func detectBacklightPath() (string, error) {
+	entries, err := os.ReadDir("/sys/class/backlight")
+	if err != nil {
+		return "", err
+	}
+	if len(entries) > 0 {
+		for _, e := range entries {
+			if strings.Contains(e.Name(), "intel") {
+				return "/sys/class/backlight/" + e.Name(), nil
+			}
+		}
+		return "/sys/class/backlight/" + entries[0].Name(), nil
+	}
+	return "", fmt.Errorf("no backlight class detected")
+}
+
+func readInt(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	v, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	return v
 }
 
 type NetWorker struct{}
@@ -396,6 +427,7 @@ func main() {
 		&CPUWorker{},
 		&RAMWorker{},
 		&MediaWorker{},
+		&BrightWorker{},
 		&NetWorker{},
 		&BatWorker{},
 		&ProfileWorker{},
