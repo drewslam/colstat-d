@@ -19,8 +19,10 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
@@ -71,6 +73,7 @@ type BatUpdate struct {
 }
 type BrightUpdate struct{ Value int }
 type ProfileUpdate struct{ Status PowStatus }
+type WeatherUpdate struct{ Status string }
 
 // State types
 type NetState struct {
@@ -102,6 +105,7 @@ type SystemState struct {
 	Bat     BatState  `json:"bat"`
 	Bright  int       `json:"bright"`
 	Profile PowStatus `json:"profile"`
+	Weather string    `json:"weather"`
 }
 
 // Hub
@@ -157,6 +161,8 @@ func (h *Hub) Run() {
 				h.state.Bright = v.Value
 			case ProfileUpdate:
 				h.state.Profile = v.Status
+			case WeatherUpdate:
+				h.state.Weather = v.Status
 			}
 
 		case <-ticker.C:
@@ -415,6 +421,56 @@ func (w *ProfileWorker) Run(updates chan Update) {
 	}
 }
 
+type WeatherWorker struct {
+	hasData bool
+}
+
+func (w *WeatherWorker) Run(updates chan Update) {
+	for {
+		out, err := fetchWeather()
+		if err == nil && strings.TrimSpace(out) != "" {
+			updates <- WeatherUpdate{Status: strings.TrimSpace(out)}
+			w.hasData = true
+		}
+		if w.hasData {
+			time.Sleep(30 * time.Minute)
+		} else {
+			time.Sleep(15 * time.Second)
+		}
+	}
+}
+
+func fetchWeather() (string, error) {
+	const source = "https://wttr.in?format='%c+%t+%m'"
+
+	resp, err := http.Get(source)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	raw := strings.TrimSpace(string(body))
+	fields := strings.Fields(raw)
+
+	for i := range fields {
+		fields[i] = strings.TrimPrefix(fields[i], "+")
+	}
+
+	result := strings.Join(fields, " ")
+	result = strings.Trim(result, "'")
+
+	if result == "weather data source not available" {
+		return "", nil
+	}
+
+	return result, nil
+}
+
 func main() {
 	socketPath := "/tmp/colstat.sock"
 	os.Remove(socketPath)
@@ -431,6 +487,7 @@ func main() {
 		&NetWorker{},
 		&BatWorker{},
 		&ProfileWorker{},
+		&WeatherWorker{},
 	}
 	for _, w := range workers {
 		go func(worker interface{ Run(chan Update) }) {
