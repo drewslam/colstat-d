@@ -306,12 +306,12 @@ func (w *BrightWorker) Run(updates chan Update) {
 		log.Print(err)
 		return
 	}
-	maxBrightness := readInt(backlightBase + "/max_brightness")
+	maxBrightness := readIntFromFile(backlightBase + "/max_brightness")
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		brightVal := readInt(backlightBase + "/actual_brightness")
+		brightVal := readIntFromFile(backlightBase + "/actual_brightness")
 		if maxBrightness > 0 {
 			brightPct := (brightVal * 100) / maxBrightness
 			updates <- BrightUpdate{Value: brightPct}
@@ -335,7 +335,7 @@ func detectBacklightPath() (string, error) {
 	return "", fmt.Errorf("no backlight class detected")
 }
 
-func readInt(path string) int {
+func readIntFromFile(path string) int {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0
